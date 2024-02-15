@@ -1,0 +1,38 @@
+﻿version: '3.4'
+
+services:
+  app:
+    image: app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      - db
+    networks:
+      - app-network
+    environment:
+      - ConnectionStrings__DefaultConnection=Server=db;Database=master;User=sa;Password=${SA_PASSWORD};TrustServerCertificate=True;
+
+    ports:
+      - "8000:80"
+      - "8001:443"
+
+  db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    user: root
+    environment:
+      SA_PASSWORD: ${SA_PASSWORD}
+      ACCEPT_EULA: "Y"
+    volumes:
+      - dbdata:/var/opt/mssql
+    networks:
+      - app-network
+    ports:
+      - "14331:1433"
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  dbdata:
