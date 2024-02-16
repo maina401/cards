@@ -1,4 +1,3 @@
-using System.Security.Claims;
 using Cards.Core.DTOs;
 using Cards.Enums;
 using Cards.Interfaces;
@@ -11,23 +10,22 @@ namespace Cards.Services
     {
         private readonly AppDbContext context;
         private readonly string userId;
+        private readonly string role;
         private IQueryable<Card> query;
-        private readonly IHttpContextAccessor httpContextAccessor;
 
-        public CardService(AppDbContext context, IHttpContextAccessor httpContextAccessor)
+        public CardService(AppDbContext context, IAuthService authService)
         {
             this.context = context;
-            this.httpContextAccessor = httpContextAccessor;
-            userId = httpContextAccessor.HttpContext!.User.FindFirstValue(ClaimTypes.NameIdentifier);
-            var role = httpContextAccessor.HttpContext!.User.FindFirstValue(ClaimTypes.Role);
-            query = this.context.Cards.AsQueryable();
+            userId = authService.UserId!;
+            role = authService.Role!;
+            query = context.Cards.AsQueryable();
             if (role == AccessLevel.Member.ToString())
             {
-                query = query.Where(c => c.UserId.ToString() == userId);
+                query = query.Where(c => c.UserId.ToString() == authService.UserId);
             }
         }
 
-        public async Task<PagedList<Card>> GetAllAsync(CardParameters cardParameters)
+        public async Task<PagedResponse<Card>> GetAllAsync(CardParameters cardParameters)
         {
             // Get the user id and role
             if (!Guid.TryParse(userId, out var id))
@@ -41,6 +39,9 @@ namespace Cards.Services
             {
                 query = cardParameters.Filter.ApplyTo(query);
             }
+            // Get the total count before applying the pagination, after applying the filters
+            var totalCount = await query.CountAsync();
+
 
             // Apply the sorting
             if (cardParameters.Sort != null)
@@ -54,9 +55,17 @@ namespace Cards.Services
                 query = cardParameters.Pagination.ApplyTo(query);
             }
 
-
-            return await PagedList<Card>.ToPagedList(query, cardParameters.Pagination?.PageNumber ?? 1,
+            var pagedList = await PagedList<Card>.ToPagedList(query, cardParameters.Pagination?.PageNumber ?? 1,
                 cardParameters.Pagination?.PageSize ?? 1000);
+
+            return new PagedResponse<Card>
+            {
+                Data = pagedList,
+                CurrentPage = pagedList.CurrentPage,
+                TotalPages = (int)Math.Ceiling(totalCount / (double)pagedList.PageSize), // Calculate the total pages (rounded up to the nearest whole number
+                PageSize = pagedList.PageSize,
+                TotalCount = totalCount
+            };
         }
 
         public async Task<Card> GetByIdAsync(Guid id)
@@ -71,6 +80,9 @@ namespace Cards.Services
             {
                 Name = input.Name,
                 Description = input.Description ?? string.Empty,
+                Color = input.Color,
+                Status = input.Status,
+                CreatedAt = DateTime.UtcNow,
                 UserId = userId != null ? Guid.Parse(userId) : throw new InvalidOperationException("Invalid user id")
             };
             context.Cards.Add(card);
@@ -78,9 +90,27 @@ namespace Cards.Services
             return card;
         }
 
-        public async Task UpdateAsync(CardDto card)
+        public async Task UpdateAsync(CardDto input)
         {
+            //id is required
+            if (input.Id == Guid.Empty) throw new InvalidOperationException("Id is required");
+            var card = await context.Cards.FindAsync(input.Id);
+            if (card == null) throw new InvalidOperationException("Card not found");
+            
+            if (card.UserId.ToString() != userId &&
+               role != AccessLevel.Admin.ToString())
+            {
+                throw new InvalidOperationException("Unauthorized");
+            }
+            
+            card.Name = input.Name;
+            card.Description = input.Description ?? string.Empty;
+            card.Color = input.Color;
+            card.Status = input.Status;
+            card.UpdatedAt = DateTime.UtcNow;
+            
             context.Entry(card).State = EntityState.Modified;
+            
             await context.SaveChangesAsync();
         }
 
@@ -91,7 +121,7 @@ namespace Cards.Services
             if (card == null) throw new InvalidOperationException("Card not found");
 
             if (card.UserId.ToString() != userId &&
-                !httpContextAccessor.HttpContext!.User.IsInRole(AccessLevel.Admin.ToString()))
+               role != AccessLevel.Admin.ToString())
             {
                 throw new InvalidOperationException("Unauthorized");
             }

@@ -26,10 +26,6 @@ namespace Cards.Models
         /// </summary>
         public Role Role { get; set; }
 
-        /// <summary>
-        /// Gets or sets the password of the user.
-        /// </summary>
-        public string Password { get; set; }
 
         [JsonIgnore] public ICollection<Card> Cards { get; set; }
         public DateTime CreatedAt { get; set; }
